@@ -359,7 +359,12 @@ class OpenAIEmbedder:
 
 
 class OllamaEmbedder:
-    """Generate embeddings using Ollama (local)."""
+    """Generate embeddings using Ollama (local).
+
+    Uses the modern ``/api/embed`` endpoint (``input`` -> ``embeddings``),
+    which supports batch requests. The legacy ``/api/embeddings`` endpoint
+    (``prompt`` -> ``embedding``) is deprecated.
+    """
 
     def __init__(
         self,
@@ -367,7 +372,7 @@ class OllamaEmbedder:
         model: str = "nomic-embed-text",
         api_key: Optional[str] = None,
     ):
-        self.base_url = base_url
+        self.base_url = base_url.rstrip("/")
         self.model = model
         headers = {}
         if api_key:
@@ -390,14 +395,21 @@ class OllamaEmbedder:
     def embed(self, text: str, task_type: str = "search_document") -> List[float]:
         prefix = self._get_prefix(task_type)
         response = self.client.post(
-            f"{self.base_url}/api/embeddings",
-            json={"model": self.model, "prompt": f"{prefix}{text}"}
+            f"{self.base_url}/api/embed",
+            json={"model": self.model, "input": f"{prefix}{text}"}
         )
         response.raise_for_status()
-        return response.json()["embedding"]
+        return response.json()["embeddings"][0]
 
     def embed_batch(self, texts: List[str], task_type: str = "search_document") -> List[List[float]]:
-        return [self.embed(text, task_type) for text in texts]
+        prefix = self._get_prefix(task_type)
+        prefixed_texts = [f"{prefix}{t}" for t in texts]
+        response = self.client.post(
+            f"{self.base_url}/api/embed",
+            json={"model": self.model, "input": prefixed_texts}
+        )
+        response.raise_for_status()
+        return response.json()["embeddings"]
 
     def close(self):
         self.client.close()
