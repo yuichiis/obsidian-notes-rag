@@ -335,10 +335,26 @@ class VaultWatcher:
         lmstudio_api_key: Optional[str] = DEFAULT_LMSTUDIO_API_KEY,
         model: Optional[str] = DEFAULT_MODEL,
         debounce_delay: float = DEFAULT_DEBOUNCE,
+        indexer_config: Optional[IndexerConfig] = None,
     ):
         self.vault_path = Path(vault_path)
         self.provider = provider
         self.ollama_url = ollama_url
+        self.indexer_config = indexer_config or _config.indexer
+
+        # Resolve model from config file when not explicitly overridden
+        # (mirrors the fallback logic in cli.py index/search/similar/context).
+        # Without this, watch would silently use the provider default
+        # (e.g. nomic-embed-text) while index/search use the configured model,
+        # producing vectors in an incomparable space or a dimension mismatch.
+        if model is None:
+            if provider == "ollama":
+                model = _config.ollama_model
+            elif provider == "lmstudio":
+                model = _config.lmstudio_model
+            else:
+                model = _config.openai_model
+        self.model = model
 
         # Set OpenAI API key from config if needed
         if provider == "openai" and _config.openai_api_key:
@@ -416,6 +432,7 @@ class VaultWatcher:
         logger.info(f"Starting watcher for vault: {self.vault_path}")
         logger.info(f"Debounce delay: {self.debounce_delay}s")
         logger.info(f"Provider: {self.provider}")
+        logger.info(f"Model: {self.model}")
 
         self._handler = NoteEventHandler(
             vault_path=self.vault_path,
@@ -423,7 +440,7 @@ class VaultWatcher:
             store=self.store,
             debounce_delay=self.debounce_delay,
             retry_queue=self.retry_queue,
-            indexer_config=_config.indexer,
+            indexer_config=self.indexer_config,
         )
 
         observer = Observer()

@@ -772,11 +772,20 @@ def watch(ctx, debounce):
     lmstudio_url = ctx.obj["lmstudio_url"]
     ollama_api_key = ctx.obj["ollama_api_key"]
     lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    config = ctx.obj["config"]
     model = ctx.obj["model"]
+    if model is None:
+        if provider == "openai":
+            model = config.openai_model
+        elif provider == "ollama":
+            model = config.ollama_model
+        elif provider == "lmstudio":
+            model = config.lmstudio_model
 
     click.echo(f"Watching vault: {vault_path}")
     click.echo(f"Data path: {data_path}")
     click.echo(f"Provider: {provider}")
+    click.echo(f"Model: {model}")
     click.echo(f"Debounce: {debounce}s")
     click.echo("Press Ctrl+C to stop.\n")
 
@@ -790,6 +799,7 @@ def watch(ctx, debounce):
         lmstudio_api_key=lmstudio_api_key,
         model=model,
         debounce_delay=debounce,
+        indexer_config=config.indexer,
     )
     watcher.run_forever()
 
