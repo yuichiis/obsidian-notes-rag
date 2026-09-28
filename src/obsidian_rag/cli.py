@@ -274,7 +274,7 @@ def setup():
                 click.echo("\nCould not list models. If a single model is loaded,")
                 click.echo("you can keep 'default' — llama-server accepts any model name.")
                 click.echo("Start the server with embedding support, e.g.:")
-                click.echo("  llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean")
+                click.echo("  llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean -c 2048 -ub 2048")
                 config.llamacpp_model = click.prompt("\nEnter embedding model identifier", default="default")
         else:
             click.echo(" not detected (server may still work)")

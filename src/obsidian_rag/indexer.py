@@ -472,7 +472,11 @@ class LlamaCppEmbedder:
 
     Expects the server to be started with embedding support, e.g.::
 
-        llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean --port 8080
+        llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean --port 8080 -c 2048 -ub 2048
+
+    NOTE: ``-ub 2048`` matters — chunks can be up to 1500 tokens while the
+    server default physical batch size is 512, so longer chunks would be
+    rejected with "input is too large to process".
 
     Uses the OpenAI-compatible ``POST /v1/embeddings`` endpoint.
     The ``model`` value is passed through as-is; llama-server typically

@@ -52,12 +52,26 @@ def resolve_path_case(path: str) -> str:
 
 def get_config_dir() -> Path:
     """Get the configuration directory (cross-platform)."""
-    return Path(user_config_dir(APP_NAME))
+    # appauthor=False: platformdirs>=4 defaults appauthor to appname on
+    # Windows, which would double the segment
+    # (".../obsidian-notes-rag/obsidian-notes-rag"). roaming=True keeps the
+    # documented %APPDATA% location on Windows.
+    return Path(user_config_dir(APP_NAME, appauthor=False, roaming=True))
 
 
 def get_data_dir() -> Path:
     """Get the data directory (cross-platform)."""
-    return Path(user_data_dir(APP_NAME))
+    return Path(user_data_dir(APP_NAME, appauthor=False))
+
+
+def _legacy_config_path() -> Path:
+    """Config path used before the platformdirs-4 double-segment fix.
+
+    platformdirs>=4 on Windows returned
+    ".../obsidian-notes-rag/obsidian-notes-rag", so configs written by
+    `setup` may live there. Used as a read fallback only.
+    """
+    return Path(user_config_dir(APP_NAME)) / "config.toml"
 
 
 def get_config_path() -> Path:
@@ -129,6 +143,12 @@ def load_config() -> Config:
 
     # Load from config file if it exists
     config_path = get_config_path()
+    if not config_path.exists():
+        # Fall back to the pre-fix doubled-segment location (Windows +
+        # platformdirs>=4) so existing setups keep working.
+        legacy_path = _legacy_config_path()
+        if legacy_path != config_path and legacy_path.exists():
+            config_path = legacy_path
     if config_path.exists():
         try:
             with open(config_path, "rb") as f:

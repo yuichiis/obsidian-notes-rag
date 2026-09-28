@@ -176,9 +176,28 @@ obsidian-rag --provider lmstudio index
 Start `llama serve` with embedding support (`--embeddings` + `--pooling` are required), then:
 
 ```bash
-llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean --port 8080
+llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean --port 8080 -c 2048 -ub 2048
 obsidian-rag --provider llamacpp index
 ```
+
+The `-ub 2048` flag is important: since chunks can be up to 1,500 tokens long,
+the default physical batch size (512) would cause long chunks to be
+rejected with an `input is too large to process` error.
+
+> Note the model's context length: the training context for
+> `nomic-embed-text-v2-moe` is 512 tokens, so the server caps slots
+> at 512; chunks exceeding 512 tokens cannot be accommodated
+> via server flags (`input is larger than the max context size`).
+> In that case, either use `nomic-embed-text-v1.5` (2,048 tokens)
+> or reduce the chunk size in the configuration file:
+>
+> ```toml
+> [indexer]
+> chunk_size = 400
+> ```
+>
+> After changing the chunking settings, please rebuild the index
+> using `obsidian-rag index --clear`.
 
 If the server was started with `--api-key`, pass it via `--llamacpp-api-key`
 or `OBSIDIAN_RAG_LLAMACPP_API_KEY`. When a single model is loaded,
