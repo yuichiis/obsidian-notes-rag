@@ -44,8 +44,10 @@ DEFAULT_DATA_PATH = _config.get_data_path()
 DEFAULT_PROVIDER = _config.provider
 DEFAULT_OLLAMA_URL = _config.ollama_url
 DEFAULT_LMSTUDIO_URL = _config.lmstudio_url
+DEFAULT_LLAMACPP_URL = _config.llamacpp_url
 DEFAULT_OLLAMA_API_KEY: Optional[str] = _config.get_ollama_api_key()
 DEFAULT_LMSTUDIO_API_KEY: Optional[str] = _config.get_lmstudio_api_key()
+DEFAULT_LLAMACPP_API_KEY: Optional[str] = _config.get_llamacpp_api_key()
 DEFAULT_MODEL: Optional[str] = None  # Use provider default
 DEFAULT_DEBOUNCE = float(os.environ.get("OBSIDIAN_RAG_DEBOUNCE", "2.0"))
 
@@ -56,6 +58,19 @@ def check_ollama_health(ollama_url: str = "http://localhost:11434") -> bool:
     """Check if Ollama is running and accessible."""
     try:
         response = httpx.get(f"{ollama_url}/api/tags", timeout=5.0)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+def check_llamacpp_health(llamacpp_url: str = "http://localhost:8080") -> bool:
+    """Check if llama.cpp llama-server is running and accessible."""
+    try:
+        base = llamacpp_url.rstrip("/")
+        response = httpx.get(f"{base}/health", timeout=5.0)
+        if response.status_code == 200:
+            return True
+        response = httpx.get(f"{base}/v1/models", timeout=5.0)
         return response.status_code == 200
     except Exception:
         return False
@@ -331,8 +346,10 @@ class VaultWatcher:
         provider: str = DEFAULT_PROVIDER,
         ollama_url: str = DEFAULT_OLLAMA_URL,
         lmstudio_url: str = DEFAULT_LMSTUDIO_URL,
+        llamacpp_url: str = DEFAULT_LLAMACPP_URL,
         ollama_api_key: Optional[str] = DEFAULT_OLLAMA_API_KEY,
         lmstudio_api_key: Optional[str] = DEFAULT_LMSTUDIO_API_KEY,
+        llamacpp_api_key: Optional[str] = DEFAULT_LLAMACPP_API_KEY,
         model: Optional[str] = DEFAULT_MODEL,
         debounce_delay: float = DEFAULT_DEBOUNCE,
         indexer_config: Optional[IndexerConfig] = None,
@@ -340,6 +357,7 @@ class VaultWatcher:
         self.vault_path = Path(vault_path)
         self.provider = provider
         self.ollama_url = ollama_url
+        self.llamacpp_url = llamacpp_url
         self.indexer_config = indexer_config or _config.indexer
 
         # Resolve model from config file when not explicitly overridden
@@ -352,6 +370,8 @@ class VaultWatcher:
                 model = _config.ollama_model
             elif provider == "lmstudio":
                 model = _config.lmstudio_model
+            elif provider == "llamacpp":
+                model = _config.llamacpp_model
             else:
                 model = _config.openai_model
         self.model = model
@@ -372,6 +392,9 @@ class VaultWatcher:
         elif provider == "lmstudio":
             base_url = lmstudio_url
             api_key = lmstudio_api_key
+        elif provider == "llamacpp":
+            base_url = llamacpp_url
+            api_key = llamacpp_api_key
         else:
             base_url = None
             api_key = None
@@ -408,6 +431,10 @@ class VaultWatcher:
             if self.provider == "ollama" and not check_ollama_health(self.ollama_url):
                 logger.warning("Ollama health check failed!")
                 send_notification("Obsidian RAG", "Ollama is not responding")
+                continue
+            if self.provider == "llamacpp" and not check_llamacpp_health(self.llamacpp_url):
+                logger.warning("llama.cpp health check failed!")
+                send_notification("Obsidian RAG", "llama.cpp is not responding")
                 continue
 
             # Process retry queue
@@ -535,8 +562,10 @@ def run_watcher(
     provider: str = DEFAULT_PROVIDER,
     ollama_url: str = DEFAULT_OLLAMA_URL,
     lmstudio_url: str = DEFAULT_LMSTUDIO_URL,
+    llamacpp_url: str = DEFAULT_LLAMACPP_URL,
     ollama_api_key: Optional[str] = DEFAULT_OLLAMA_API_KEY,
     lmstudio_api_key: Optional[str] = DEFAULT_LMSTUDIO_API_KEY,
+    llamacpp_api_key: Optional[str] = DEFAULT_LLAMACPP_API_KEY,
     model: Optional[str] = DEFAULT_MODEL,
     debounce: float = DEFAULT_DEBOUNCE,
 ):
@@ -553,8 +582,10 @@ def run_watcher(
         provider=provider,
         ollama_url=ollama_url,
         lmstudio_url=lmstudio_url,
+        llamacpp_url=llamacpp_url,
         ollama_api_key=ollama_api_key,
         lmstudio_api_key=lmstudio_api_key,
+        llamacpp_api_key=llamacpp_api_key,
         model=model,
         debounce_delay=debounce,
     )

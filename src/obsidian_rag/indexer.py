@@ -467,6 +467,67 @@ class LMStudioEmbedder:
         self.client.close()
 
 
+class LlamaCppEmbedder:
+    """Generate embeddings using llama.cpp llama-server (local, OpenAI-compatible API).
+
+    Expects the server to be started with embedding support, e.g.::
+
+        llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean --port 8080
+
+    Uses the OpenAI-compatible ``POST /v1/embeddings`` endpoint.
+    The ``model`` value is passed through as-is; llama-server typically
+    accepts any value (or the ``--alias``) when a single model is loaded.
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8080",
+        model: str = "default",
+        api_key: Optional[str] = None,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self.client = httpx.Client(timeout=60.0, headers=headers)
+
+    def _get_prefix(self, task_type: str) -> str:
+        model = self.model.lower()
+        if "nomic" in model:
+            if task_type == "search_document":
+                return "search_document: "
+            elif task_type == "search_query":
+                return "search_query: "
+        elif "qwen" in model:
+            if task_type == "search_query":
+                return "Query: "
+        return ""
+
+    def embed(self, text: str, task_type: str = "search_document") -> List[float]:
+        prefix = self._get_prefix(task_type)
+        response = self.client.post(
+            f"{self.base_url}/v1/embeddings",
+            json={"model": self.model, "input": f"{prefix}{text}"}
+        )
+        response.raise_for_status()
+        return response.json()["data"][0]["embedding"]
+
+    def embed_batch(self, texts: List[str], task_type: str = "search_document") -> List[List[float]]:
+        prefix = self._get_prefix(task_type)
+        prefixed_texts = [f"{prefix}{t}" for t in texts]
+        response = self.client.post(
+            f"{self.base_url}/v1/embeddings",
+            json={"model": self.model, "input": prefixed_texts}
+        )
+        response.raise_for_status()
+        data = response.json()["data"]
+        return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
+
+    def close(self):
+        self.client.close()
+
+
 def is_lmstudio_running(base_url: str = "http://localhost:1234", api_key: Optional[str] = None) -> bool:
     """Check if LM Studio server is running."""
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
@@ -529,7 +590,44 @@ def get_ollama_models(base_url: str = "http://localhost:11434", api_key: Optiona
         return []
 
 
-Embedder = OpenAIEmbedder | OllamaEmbedder | LMStudioEmbedder
+def is_llamacpp_running(base_url: str = "http://localhost:8080", api_key: Optional[str] = None) -> bool:
+    """Check if llama.cpp llama-server is running."""
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        with httpx.Client(timeout=2.0, headers=headers) as client:
+            base = base_url.rstrip("/")
+            # /health returns 200 with {"status": "ok"} when ready
+            response = client.get(f"{base}/health")
+            if response.status_code in (200, 401):
+                return True
+            # Fallback to the OpenAI-compatible models endpoint
+            response = client.get(f"{base}/v1/models")
+            return response.status_code in (200, 401)
+    except (httpx.RequestError, httpx.TimeoutException):
+        return False
+
+
+def get_llamacpp_models(base_url: str = "http://localhost:8080", api_key: Optional[str] = None) -> List[str]:
+    """Get list of available models from llama.cpp llama-server.
+
+    llama-server usually serves a single loaded model, so every id
+    reported by ``/v1/models`` is returned as-is (no embedding keyword
+    filtering).
+    """
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        with httpx.Client(timeout=5.0, headers=headers) as client:
+            response = client.get(f"{base_url.rstrip('/')}/v1/models")
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            models = [m.get("id", "") for m in data.get("data", [])]
+            return sorted(m for m in models if m)
+    except (httpx.RequestError, httpx.TimeoutException, ValueError):
+        return []
+
+
+Embedder = OpenAIEmbedder | OllamaEmbedder | LMStudioEmbedder | LlamaCppEmbedder
 
 
 def create_embedder(
@@ -562,8 +660,17 @@ def create_embedder(
         if api_key:
             kwargs["api_key"] = api_key
         return LMStudioEmbedder(**kwargs)
+    elif provider == "llamacpp":
+        kwargs = {}
+        if model:
+            kwargs["model"] = model
+        if base_url:
+            kwargs["base_url"] = base_url
+        if api_key:
+            kwargs["api_key"] = api_key
+        return LlamaCppEmbedder(**kwargs)
     else:
-        raise ValueError(f"Unknown provider: {provider}. Use 'openai', 'ollama', or 'lmstudio'.")
+        raise ValueError(f"Unknown provider: {provider}. Use 'openai', 'ollama', 'lmstudio', or 'llamacpp'.")
 
 
 class VaultIndexer:

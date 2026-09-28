@@ -47,6 +47,10 @@ def get_embedder() -> Embedder:
             model = config.ollama_model
             base_url = config.ollama_url
             api_key = config.get_ollama_api_key()
+        elif config.provider == "llamacpp":
+            model = config.llamacpp_model
+            base_url = config.llamacpp_url
+            api_key = config.get_llamacpp_api_key()
         else:  # lmstudio
             model = config.lmstudio_model
             base_url = config.lmstudio_url

@@ -3,7 +3,7 @@
 
 # obsidian-notes-rag
 
-MCP server and CLI for semantic search over your Obsidian vault — or any folder of linked markdown: an OKF knowledge bundle, a repo's docs tree, a wiki export. The CLI installs as `obsidian-rag` and as **`okf-search`** — same tool, use whichever name fits the corpus. Generates embeddings with OpenAI, Ollama, or LM Studio. Stores vectors locally in sqlite-vec (~200KB, no telemetry, no network calls). Nothing requires Obsidian itself: point `--root` at any markdown directory and both the semantic index and the link graph work the same.
+MCP server and CLI for semantic search over your Obsidian vault — or any folder of linked markdown: an OKF knowledge bundle, a repo's docs tree, a wiki export. The CLI installs as `obsidian-rag` and as **`okf-search`** — same tool, use whichever name fits the corpus. Generates embeddings with OpenAI, Ollama, LM Studio, or llama.cpp. Stores vectors locally in sqlite-vec (~200KB, no telemetry, no network calls). Nothing requires Obsidian itself: point `--root` at any markdown directory and both the semantic index and the link graph work the same.
 
 ## What it does
 
@@ -21,7 +21,7 @@ As an MCP server, it gives any compatible AI assistant the same capabilities —
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (for running and installing)
-- One of: `OPENAI_API_KEY`, [Ollama](https://ollama.ai/), or [LM Studio](https://lmstudio.ai/) for embeddings
+- One of: `OPENAI_API_KEY`, [Ollama](https://ollama.ai/), [LM Studio](https://lmstudio.ai/), or [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`) for embeddings
 
 ## Setup
 
@@ -171,6 +171,20 @@ Load an embedding model in LM Studio, then:
 obsidian-rag --provider lmstudio index
 ```
 
+## Using llama.cpp (local, no API key)
+
+Start `llama serve` with embedding support (`--embeddings` + `--pooling` are required), then:
+
+```bash
+llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean --port 8080
+obsidian-rag --provider llamacpp index
+```
+
+If the server was started with `--api-key`, pass it via `--llamacpp-api-key`
+or `OBSIDIAN_RAG_LLAMACPP_API_KEY`. When a single model is loaded,
+llama-server accepts any model name, so the default `default` works;
+otherwise set the model with `--model` or `OBSIDIAN_RAG_MODEL`.
+
 ## Configuration
 
 The setup wizard writes to `~/.config/obsidian-notes-rag/config.toml`. You can also override with environment variables:
@@ -178,11 +192,13 @@ The setup wizard writes to `~/.config/obsidian-notes-rag/config.toml`. You can a
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API key |
-| `OBSIDIAN_RAG_PROVIDER` | `openai` (default), `ollama`, or `lmstudio` |
+| `OBSIDIAN_RAG_PROVIDER` | `openai` (default), `ollama`, `lmstudio`, or `llamacpp` |
 | `OBSIDIAN_RAG_VAULT` | Path to Obsidian vault |
 | `OBSIDIAN_RAG_DATA` | Index storage path (default: platform-specific) |
 | `OBSIDIAN_RAG_OLLAMA_URL` | Ollama URL (default: `http://localhost:11434`) |
 | `OBSIDIAN_RAG_LMSTUDIO_URL` | LM Studio URL (default: `http://localhost:1234`) |
+| `OBSIDIAN_RAG_LLAMACPP_URL` | llama.cpp URL (default: `http://localhost:8080`) |
+| `OBSIDIAN_RAG_LLAMACPP_API_KEY` | llama.cpp API key (when started with `--api-key`) |
 | `OBSIDIAN_RAG_MODEL` | Override embedding model |
 
 ## How it works

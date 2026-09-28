@@ -14,7 +14,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)
 
 from .config import Config, load_config, save_config, get_config_path, get_data_dir
-from .indexer import create_embedder, VaultIndexer, is_ollama_running, get_ollama_models, is_lmstudio_running, get_lmstudio_models
+from .indexer import create_embedder, VaultIndexer, is_ollama_running, get_ollama_models, is_lmstudio_running, get_lmstudio_models, is_llamacpp_running, get_llamacpp_models
 from .links import expand_neighbors
 from .server import run_server
 from .store import VectorStore
@@ -55,19 +55,23 @@ def _require_vault(ctx) -> str:
               help="Path to the notes root — an Obsidian vault, an OKF bundle, or any folder of markdown")
 @click.option("--data", default=None, help="Path to vector store data")
 @click.option("--provider", default=None,
-              type=click.Choice(["openai", "ollama", "lmstudio"]),
+              type=click.Choice(["openai", "ollama", "lmstudio", "llamacpp"]),
               help="Embedding provider (default: openai)")
 @click.option("--ollama-url", default=None,
               help="Ollama API URL (only used with --provider ollama)")
 @click.option("--lmstudio-url", default=None,
               help="LM Studio API URL (only used with --provider lmstudio)")
+@click.option("--llamacpp-url", default=None,
+              help="llama.cpp API URL (only used with --provider llamacpp)")
 @click.option("--ollama-api-key", default=None,
               help="Bearer token for Ollama (only used with --provider ollama)")
 @click.option("--lmstudio-api-key", default=None,
               help="Bearer token for LM Studio (only used with --provider lmstudio)")
+@click.option("--llamacpp-api-key", default=None,
+              help="Bearer token for llama.cpp (only used with --provider llamacpp)")
 @click.option("--model", default=None, help="Override embedding model name")
 @click.pass_context
-def main(ctx, vault, data, provider, ollama_url, lmstudio_url, ollama_api_key, lmstudio_api_key, model):
+def main(ctx, vault, data, provider, ollama_url, lmstudio_url, llamacpp_url, ollama_api_key, lmstudio_api_key, llamacpp_api_key, model):
     """Obsidian RAG - Semantic search for your Obsidian vault."""
     ctx.ensure_object(dict)
 
@@ -79,8 +83,10 @@ def main(ctx, vault, data, provider, ollama_url, lmstudio_url, ollama_api_key, l
     ctx.obj["provider"] = provider or config.provider
     ctx.obj["ollama_url"] = ollama_url or config.ollama_url
     ctx.obj["lmstudio_url"] = lmstudio_url or config.lmstudio_url
+    ctx.obj["llamacpp_url"] = llamacpp_url or config.llamacpp_url
     ctx.obj["ollama_api_key"] = ollama_api_key or config.get_ollama_api_key()
     ctx.obj["lmstudio_api_key"] = lmstudio_api_key or config.get_lmstudio_api_key()
+    ctx.obj["llamacpp_api_key"] = llamacpp_api_key or config.get_llamacpp_api_key()
     ctx.obj["model"] = model  # None means use provider default
     ctx.obj["config"] = config
 
@@ -104,13 +110,16 @@ def setup():
     click.echo("  1. OpenAI (recommended - requires API key)")
     click.echo("  2. Ollama (local, offline)")
     click.echo("  3. LM Studio (local, offline)")
-    provider_choice = click.prompt("Choice", type=click.Choice(["1", "2", "3"]), default="1")
+    click.echo("  4. llama.cpp (local, offline)")
+    provider_choice = click.prompt("Choice", type=click.Choice(["1", "2", "3", "4"]), default="1")
     if provider_choice == "1":
         config.provider = "openai"
     elif provider_choice == "2":
         config.provider = "ollama"
-    else:
+    elif provider_choice == "3":
         config.provider = "lmstudio"
+    else:
+        config.provider = "llamacpp"
 
     # 2. Provider-specific setup
     if config.provider == "openai":
@@ -174,7 +183,7 @@ def setup():
             click.echo(" not detected (server may still work)")
             click.echo("Could not auto-detect models.")
             config.ollama_model = click.prompt("\nEnter embedding model name", default="nomic-embed-text")
-    else:
+    elif config.provider == "lmstudio":
         # LM Studio setup - check connection after getting URL
         default_lmstudio_url = "http://localhost:1234"
         lmstudio_url = click.prompt(
@@ -221,6 +230,57 @@ def setup():
             click.echo(" not detected (server may still work)")
             click.echo("Could not auto-detect models.")
             config.lmstudio_model = click.prompt("Enter embedding model identifier")
+    else:
+        # llama.cpp setup - check connection after getting URL
+        default_llamacpp_url = "http://localhost:8080"
+        llamacpp_url = click.prompt(
+            "\nllama.cpp API URL",
+            default=default_llamacpp_url
+        )
+        config.llamacpp_url = llamacpp_url
+
+        # Optional Bearer token (llama-server --api-key)
+        if click.confirm("\nDoes your llama.cpp instance require an API key?", default=False):
+            config.llamacpp_api_key = click.prompt("Enter API key", hide_input=False)
+
+        # Verify connection and get available models
+        click.echo("Checking llama.cpp server...", nl=False)
+        server_running = is_llamacpp_running(llamacpp_url, api_key=config.llamacpp_api_key)
+
+        if server_running:
+            click.echo(" ✓ connected")
+
+            # Fetch available models (usually a single loaded model)
+            click.echo("Fetching available models...", nl=False)
+            available_models = get_llamacpp_models(llamacpp_url, api_key=config.llamacpp_api_key)
+
+            if available_models:
+                click.echo(f" found {len(available_models)}")
+                click.echo("\nSelect embedding model:")
+                for i, model in enumerate(available_models, 1):
+                    click.echo(f"  {i}. {model}")
+                click.echo(f"  {len(available_models) + 1}. Other (enter model identifier)")
+
+                choices = [str(i) for i in range(1, len(available_models) + 2)]
+                model_choice = click.prompt("Choice", type=click.Choice(choices), default="1")
+                choice_idx = int(model_choice) - 1
+
+                if choice_idx < len(available_models):
+                    config.llamacpp_model = available_models[choice_idx]
+                else:
+                    config.llamacpp_model = click.prompt("Enter embedding model identifier")
+            else:
+                click.echo(" none found")
+                click.echo("\nCould not list models. If a single model is loaded,")
+                click.echo("you can keep 'default' — llama-server accepts any model name.")
+                click.echo("Start the server with embedding support, e.g.:")
+                click.echo("  llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean")
+                config.llamacpp_model = click.prompt("\nEnter embedding model identifier", default="default")
+        else:
+            click.echo(" not detected (server may still work)")
+            click.echo("Start the server with embedding support, e.g.:")
+            click.echo("  llama serve -hf nomic-ai/nomic-embed-text-v1.5-GGUF:Q8_0 --embeddings --pooling mean")
+            config.llamacpp_model = click.prompt("\nEnter embedding model identifier", default="default")
 
     # 3. Vault path
     while True:
@@ -267,12 +327,19 @@ def setup():
                     base_url=config.ollama_url,
                     api_key=config.get_ollama_api_key(),
                 )
-            else:  # lmstudio
+            elif config.provider == "lmstudio":
                 embedder = create_embedder(
                     provider="lmstudio",
                     model=config.lmstudio_model,
                     base_url=config.lmstudio_url,
                     api_key=config.get_lmstudio_api_key(),
+                )
+            else:  # llamacpp
+                embedder = create_embedder(
+                    provider="llamacpp",
+                    model=config.llamacpp_model,
+                    base_url=config.llamacpp_url,
+                    api_key=config.get_llamacpp_api_key(),
                 )
 
             store = VectorStore(data_path=config.get_data_path())
@@ -335,6 +402,7 @@ def setup():
                     None,  # model
                     config.get_ollama_api_key(),
                     config.get_lmstudio_api_key(),
+                    config.get_llamacpp_api_key(),
                 )
                 plist_path.write_text(plist_content)
 
@@ -370,8 +438,10 @@ def index(ctx, clear, path_filter):
     provider = ctx.obj["provider"]
     ollama_url = ctx.obj["ollama_url"]
     lmstudio_url = ctx.obj["lmstudio_url"]
+    llamacpp_url = ctx.obj["llamacpp_url"]
     ollama_api_key = ctx.obj["ollama_api_key"]
     lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    llamacpp_api_key = ctx.obj["llamacpp_api_key"]
     config = ctx.obj["config"]
 
     # Get model from CLI override or config file based on provider
@@ -383,6 +453,8 @@ def index(ctx, clear, path_filter):
             model = config.ollama_model
         elif provider == "lmstudio":
             model = config.lmstudio_model
+        elif provider == "llamacpp":
+            model = config.llamacpp_model
 
     click.echo(f"Indexing vault: {vault_path}")
     click.echo(f"Data path: {data_path}")
@@ -396,6 +468,9 @@ def index(ctx, clear, path_filter):
     elif provider == "lmstudio":
         base_url = lmstudio_url
         api_key = lmstudio_api_key
+    elif provider == "llamacpp":
+        base_url = llamacpp_url
+        api_key = llamacpp_api_key
     else:
         base_url = None
         api_key = None
@@ -467,8 +542,10 @@ def search(ctx, query, limit, note_type, expand, expand_limit):
     provider = ctx.obj["provider"]
     ollama_url = ctx.obj["ollama_url"]
     lmstudio_url = ctx.obj["lmstudio_url"]
+    llamacpp_url = ctx.obj["llamacpp_url"]
     ollama_api_key = ctx.obj["ollama_api_key"]
     lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    llamacpp_api_key = ctx.obj["llamacpp_api_key"]
     config = ctx.obj["config"]
 
     # Get model from CLI override or config file based on provider
@@ -480,6 +557,8 @@ def search(ctx, query, limit, note_type, expand, expand_limit):
             model = config.ollama_model
         elif provider == "lmstudio":
             model = config.lmstudio_model
+        elif provider == "llamacpp":
+            model = config.llamacpp_model
 
     # Determine the correct base_url and api_key based on provider
     if provider == "ollama":
@@ -488,6 +567,9 @@ def search(ctx, query, limit, note_type, expand, expand_limit):
     elif provider == "lmstudio":
         base_url = lmstudio_url
         api_key = lmstudio_api_key
+    elif provider == "llamacpp":
+        base_url = llamacpp_url
+        api_key = llamacpp_api_key
     else:
         base_url = None
         api_key = None
@@ -560,8 +642,10 @@ def similar(ctx, note_path, limit):
     provider = ctx.obj["provider"]
     ollama_url = ctx.obj["ollama_url"]
     lmstudio_url = ctx.obj["lmstudio_url"]
+    llamacpp_url = ctx.obj["llamacpp_url"]
     ollama_api_key = ctx.obj["ollama_api_key"]
     lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    llamacpp_api_key = ctx.obj["llamacpp_api_key"]
     config = ctx.obj["config"]
 
     model = ctx.obj["model"]
@@ -572,6 +656,8 @@ def similar(ctx, note_path, limit):
             model = config.ollama_model
         elif provider == "lmstudio":
             model = config.lmstudio_model
+        elif provider == "llamacpp":
+            model = config.llamacpp_model
 
     if provider == "ollama":
         base_url = ollama_url
@@ -579,6 +665,9 @@ def similar(ctx, note_path, limit):
     elif provider == "lmstudio":
         base_url = lmstudio_url
         api_key = lmstudio_api_key
+    elif provider == "llamacpp":
+        base_url = llamacpp_url
+        api_key = llamacpp_api_key
     else:
         base_url = None
         api_key = None
@@ -631,8 +720,10 @@ def context(ctx, note_path, limit):
     provider = ctx.obj["provider"]
     ollama_url = ctx.obj["ollama_url"]
     lmstudio_url = ctx.obj["lmstudio_url"]
+    llamacpp_url = ctx.obj["llamacpp_url"]
     ollama_api_key = ctx.obj["ollama_api_key"]
     lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    llamacpp_api_key = ctx.obj["llamacpp_api_key"]
     config = ctx.obj["config"]
 
     model = ctx.obj["model"]
@@ -643,6 +734,8 @@ def context(ctx, note_path, limit):
             model = config.ollama_model
         elif provider == "lmstudio":
             model = config.lmstudio_model
+        elif provider == "llamacpp":
+            model = config.llamacpp_model
 
     if provider == "ollama":
         base_url = ollama_url
@@ -650,6 +743,9 @@ def context(ctx, note_path, limit):
     elif provider == "lmstudio":
         base_url = lmstudio_url
         api_key = lmstudio_api_key
+    elif provider == "llamacpp":
+        base_url = llamacpp_url
+        api_key = llamacpp_api_key
     else:
         base_url = None
         api_key = None
@@ -770,8 +866,10 @@ def watch(ctx, debounce):
     provider = ctx.obj["provider"]
     ollama_url = ctx.obj["ollama_url"]
     lmstudio_url = ctx.obj["lmstudio_url"]
+    llamacpp_url = ctx.obj["llamacpp_url"]
     ollama_api_key = ctx.obj["ollama_api_key"]
     lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    llamacpp_api_key = ctx.obj["llamacpp_api_key"]
     config = ctx.obj["config"]
     model = ctx.obj["model"]
     if model is None:
@@ -781,6 +879,8 @@ def watch(ctx, debounce):
             model = config.ollama_model
         elif provider == "lmstudio":
             model = config.lmstudio_model
+        elif provider == "llamacpp":
+            model = config.llamacpp_model
 
     click.echo(f"Watching vault: {vault_path}")
     click.echo(f"Data path: {data_path}")
@@ -795,8 +895,10 @@ def watch(ctx, debounce):
         provider=provider,
         ollama_url=ollama_url,
         lmstudio_url=lmstudio_url,
+        llamacpp_url=llamacpp_url,
         ollama_api_key=ollama_api_key,
         lmstudio_api_key=lmstudio_api_key,
+        llamacpp_api_key=llamacpp_api_key,
         model=model,
         debounce_delay=debounce,
         indexer_config=config.indexer,
@@ -848,7 +950,7 @@ def _uninstall_wrapper_script():
         wrapper_path.unlink()
 
 
-def _get_plist_content(vault_path: str, data_path: str, provider: str, ollama_url: str, model: str | None, ollama_api_key: str | None = None, lmstudio_api_key: str | None = None) -> str:
+def _get_plist_content(vault_path: str, data_path: str, provider: str, ollama_url: str, model: str | None, ollama_api_key: str | None = None, lmstudio_api_key: str | None = None, llamacpp_api_key: str | None = None, llamacpp_url: str | None = None) -> str:
     """Generate launchd plist content."""
     # Use wrapper script for better System Settings appearance
     wrapper_path = WRAPPER_SCRIPT_DIR / WRAPPER_SCRIPT_NAME
@@ -873,6 +975,15 @@ def _get_plist_content(vault_path: str, data_path: str, provider: str, ollama_ur
         env_vars += f"""
         <key>OBSIDIAN_RAG_LMSTUDIO_API_KEY</key>
         <string>{lmstudio_api_key}</string>"""
+    elif provider == "llamacpp":
+        if llamacpp_url:
+            env_vars += f"""
+        <key>OBSIDIAN_RAG_LLAMACPP_URL</key>
+        <string>{llamacpp_url}</string>"""
+        if llamacpp_api_key:
+            env_vars += f"""
+        <key>OBSIDIAN_RAG_LLAMACPP_API_KEY</key>
+        <string>{llamacpp_api_key}</string>"""
 
     if model:
         env_vars += f"""
@@ -923,8 +1034,10 @@ def install_service(ctx):
     data_path = ctx.obj["data"]
     provider = ctx.obj["provider"]
     ollama_url = ctx.obj["ollama_url"]
+    llamacpp_url = ctx.obj["llamacpp_url"]
     ollama_api_key = ctx.obj["ollama_api_key"]
     lmstudio_api_key = ctx.obj["lmstudio_api_key"]
+    llamacpp_api_key = ctx.obj["llamacpp_api_key"]
     model = ctx.obj["model"]
 
     plist_path = LAUNCH_AGENTS_DIR / PLIST_NAME
@@ -943,7 +1056,7 @@ def install_service(ctx):
     click.echo(f"Created: {wrapper_path}")
 
     # Write plist
-    plist_content = _get_plist_content(vault_path, data_path, provider, ollama_url, model, ollama_api_key, lmstudio_api_key)
+    plist_content = _get_plist_content(vault_path, data_path, provider, ollama_url, model, ollama_api_key, lmstudio_api_key, llamacpp_api_key, llamacpp_url)
     plist_path.write_text(plist_content)
     click.echo(f"Created: {plist_path}")
 

@@ -87,6 +87,11 @@ class Config:
     lmstudio_model: str = "text-embedding-nomic-embed-text-v1.5"
     lmstudio_api_key: Optional[str] = None  # Bearer token for protected LM Studio instances
 
+    # llama.cpp settings (llama-server, OpenAI-compatible /v1/embeddings)
+    llamacpp_url: str = "http://localhost:8080"
+    llamacpp_model: str = "default"
+    llamacpp_api_key: Optional[str] = None  # Bearer token when started with --api-key
+
     # OpenAI model (optional override)
     openai_model: str = "text-embedding-3-small"
     indexer: IndexerConfig = field(default_factory=IndexerConfig)
@@ -106,6 +111,10 @@ class Config:
     def get_lmstudio_api_key(self) -> Optional[str]:
         """Get LM Studio Bearer token from config or environment."""
         return self.lmstudio_api_key or os.environ.get("OBSIDIAN_RAG_LMSTUDIO_API_KEY")
+
+    def get_llamacpp_api_key(self) -> Optional[str]:
+        """Get llama.cpp Bearer token from config or environment."""
+        return self.llamacpp_api_key or os.environ.get("OBSIDIAN_RAG_LLAMACPP_API_KEY")
 
 
 def load_config() -> Config:
@@ -148,6 +157,12 @@ def load_config() -> Config:
                 config.lmstudio_model = data["lmstudio"].get("model", config.lmstudio_model)
                 config.lmstudio_api_key = data["lmstudio"].get("api_key", config.lmstudio_api_key)
 
+            # llama.cpp settings
+            if "llamacpp" in data:
+                config.llamacpp_url = data["llamacpp"].get("url", config.llamacpp_url)
+                config.llamacpp_model = data["llamacpp"].get("model", config.llamacpp_model)
+                config.llamacpp_api_key = data["llamacpp"].get("api_key", config.llamacpp_api_key)
+
             # Indexer settings
             if "indexer" in data:
                 config.indexer = IndexerConfig.from_dict(data["indexer"])
@@ -166,16 +181,22 @@ def load_config() -> Config:
         config.ollama_url = os.environ["OBSIDIAN_RAG_OLLAMA_URL"]
     if os.environ.get("OBSIDIAN_RAG_LMSTUDIO_URL"):
         config.lmstudio_url = os.environ["OBSIDIAN_RAG_LMSTUDIO_URL"]
+    if os.environ.get("OBSIDIAN_RAG_LLAMACPP_URL"):
+        config.llamacpp_url = os.environ["OBSIDIAN_RAG_LLAMACPP_URL"]
     # Bearer token overrides for local providers
     if os.environ.get("OBSIDIAN_RAG_OLLAMA_API_KEY"):
         config.ollama_api_key = os.environ["OBSIDIAN_RAG_OLLAMA_API_KEY"]
     if os.environ.get("OBSIDIAN_RAG_LMSTUDIO_API_KEY"):
         config.lmstudio_api_key = os.environ["OBSIDIAN_RAG_LMSTUDIO_API_KEY"]
+    if os.environ.get("OBSIDIAN_RAG_LLAMACPP_API_KEY"):
+        config.llamacpp_api_key = os.environ["OBSIDIAN_RAG_LLAMACPP_API_KEY"]
     if os.environ.get("OBSIDIAN_RAG_MODEL"):
         if config.provider == "ollama":
             config.ollama_model = os.environ["OBSIDIAN_RAG_MODEL"]
         elif config.provider == "lmstudio":
             config.lmstudio_model = os.environ["OBSIDIAN_RAG_MODEL"]
+        elif config.provider == "llamacpp":
+            config.llamacpp_model = os.environ["OBSIDIAN_RAG_MODEL"]
         else:
             config.openai_model = os.environ["OBSIDIAN_RAG_MODEL"]
 
@@ -233,6 +254,18 @@ def save_config(config: Config) -> Path:
             lmstudio_section["api_key"] = config.lmstudio_api_key
         if lmstudio_section:
             data["lmstudio"] = lmstudio_section
+
+    # llama.cpp settings
+    if config.provider == "llamacpp":
+        llamacpp_section: dict = {}
+        if config.llamacpp_url != "http://localhost:8080":
+            llamacpp_section["url"] = config.llamacpp_url
+        if config.llamacpp_model != "default":
+            llamacpp_section["model"] = config.llamacpp_model
+        if config.llamacpp_api_key:
+            llamacpp_section["api_key"] = config.llamacpp_api_key
+        if llamacpp_section:
+            data["llamacpp"] = llamacpp_section
 
     # Indexer settings — write if preset is non-default OR any overrides are present
     indexer_dict = config.indexer.to_dict()
